@@ -1,0 +1,7 @@
+import {z} from 'zod';
+export const stages=['Enquiry','Qualified','Application','Enrolled','Withdrawn','Closed'];
+export const enquirySchema=z.object({full_name:z.string().trim().min(2).max(120),email:z.email().max(254).transform(v=>v.toLowerCase()),phone:z.string().trim().regex(/^\+?[\d ()-]{7,25}$/),address:z.string().trim().min(5).max(500),program_id:z.uuid(),message:z.string().trim().max(2000).default(''),consent:z.literal(true)});
+export const permissions={recruitment:['read','write','report','audit'],administration:['read','write','report','audit'],management:['report'],admin:['read','write','report','audit','users']};
+export function can(role,permission){return permissions[role]?.includes(permission)??false;}
+export function transitionAllowed(from,to){return (from==='Enquiry'&&to==='Qualified')||(['Enquiry','Qualified','Application'].includes(from)&&['Withdrawn','Closed'].includes(to));}
+export function report(rows,history){const counts=Object.fromEntries(stages.map(s=>[s,rows.filter(p=>p.stage===s).length]));const reached=Object.fromEntries(stages.map(s=>[s,new Set(history.filter(h=>h.to_stage===s).map(h=>h.prospect_id)).size]));return {counts,total:rows.length,reached,conversions:['Enquiry','Qualified','Application'].map((s,i)=>({from:s,to:stages[i+1],reached:reached[s],converted:reached[stages[i+1]],rate:reached[s]?Math.round(reached[stages[i+1]]/reached[s]*100):null})),dropouts:history.filter(h=>['Withdrawn','Closed'].includes(h.to_stage)).reduce((a,h)=>({...a,[h.from_stage]:(a[h.from_stage]||0)+1}),{})};}

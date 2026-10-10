@@ -1,0 +1,55 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {PGlite} from '@electric-sql/pglite';
+test('PostgreSQL recruitment lifecycle, authorization, duplicate handling and rollback',async()=>{
+ const db=new PGlite();
+ try{
+ await db.exec(`create role anon;create role authenticated;create schema auth;create table auth.users(id uuid primary key);create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;grant usage on schema public,auth to anon,authenticated;grant execute on function auth.uid() to anon,authenticated;`);
+ const schema=(await readFile(new URL('../supabase/schema.sql',import.meta.url),'utf8')).replace('create extension if not exists pgcrypto;','');
+ await db.exec(schema);
+
+ const staff='20000000-0000-4000-8000-000000000001',manager='20000000-0000-4000-8000-000000000002';
+ await db.query('insert into auth.users values($1),($2)',[staff,manager]);
+ await db.query("insert into staff_users values($1,'Recruiter','recruitment',true),($2,'Manager','management',true)",[staff,manager]);
+ const program=(await db.query('select id from programs limit 1')).rows[0].id;
+ const input={full_name:'Test Student',email:'TEST@example.com',phone:'0400 000 000',address:'10 Example Street',program_id:program,message:'Test',consent:true};
+ await db.exec('set role anon');
+ const send=async i=>(await db.query('select submit_enquiry($1::jsonb) result',[JSON.stringify(i)])).rows[0].result;
+ await send(input);
+ await assert.rejects(()=>send(input));
+ await assert.rejects(()=>send({...input,email:'invalid'}));
+ await assert.rejects(()=>send({...input,email:'other@example.com',consent:false}));
+ await db.exec('reset role');
+ const p=(await db.query('select * from prospects')).rows[0];assert.equal(p.email,'test@example.com');assert.equal(p.stage,'Enquiry');
+ await db.exec("update enquiries set enquiry_date=now()-interval '2 minutes'");
+ await db.exec('set role anon');await send({...input,full_name:'Attempted overwrite'});await db.exec('reset role');
+ assert.equal((await db.query('select count(*)::int n from prospects')).rows[0].n,1);
+ assert.equal((await db.query('select full_name from prospects')).rows[0].full_name,'Test Student');
+ assert.equal((await db.query('select count(*)::int n from enquiries where duplicate_flag')).rows[0].n,1);
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[staff]);await db.exec('set role authenticated');
+ const action=async(op,value)=>(await db.query('select crm_action($1,$2,$3::jsonb)',[p.id,op,JSON.stringify(value)]));
+ await assert.rejects(()=>action('application',{program_id:program}));
+ await assert.rejects(()=>action('stage',{stage:'Enrolled',reason:'Skip ahead'}));
+ await action('stage',{stage:'Qualified',reason:'Entry requirements reviewed'});
+ await action('application',{program_id:program});
+ const a=(await db.query('select id from applications')).rows[0].id;
+ await assert.rejects(()=>action('enrol',{application_id:a,enrolment_date:'2026-10-10'}));
+ await assert.rejects(()=>action('application_status',{application_id:a,status:'Accepted'}));
+ for(const status of ['Submitted','Under Review','Accepted'])await action('application_status',{application_id:a,status});
+ await action('enrol',{application_id:a,enrolment_date:'2026-10-10'});
+ await assert.rejects(()=>action('enrol',{application_id:a,enrolment_date:'2026-10-10'}));
+ assert.equal((await db.query('select stage from prospects')).rows[0].stage,'Enrolled');
+ assert.equal((await db.query('select count(*)::int n from enrolments')).rows[0].n,1);
+ assert.equal((await db.query('select count(*)::int n from stage_history')).rows[0].n,4);
+ await assert.rejects(()=>db.query("update prospects set stage='Enquiry'"));
+ await action('note',{body:'Test note'});await action('followup',{title:'Test task',due_at:'2026-11-01T09:00:00Z'});
+ const f=(await db.query('select id from followups')).rows[0].id;await action('complete_followup',{followup_id:f});
+ await db.query("select set_config('request.jwt.claim.sub',$1,false)",[manager]);
+ assert.equal((await db.query('select * from prospects')).rows.length,0);
+ await assert.rejects(()=>action('note',{body:'Forbidden note'}));
+ const r=(await db.query('select recruitment_report() report')).rows[0].report;assert.equal(r.prospects.length,1);assert.equal(Object.keys(r.prospects[0]).length,2);
+ await db.exec('reset role');await db.query('update staff_users set active=false where id=$1',[manager]);await db.exec('set role authenticated');
+ await assert.rejects(()=>db.query('select recruitment_report()'));
+ }finally{await db.close();}
+});
