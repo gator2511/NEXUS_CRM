@@ -1,31 +1,156 @@
-import {createClient} from '@supabase/supabase-js';
-import {report,can,transitionAllowed,enquirySchema} from '../server/rules.js';
-export const demo=import.meta.env.VITE_DEMO_MODE==='true';
-export const supabase=import.meta.env.VITE_SUPABASE_URL&&import.meta.env.VITE_SUPABASE_ANON_KEY?createClient(import.meta.env.VITE_SUPABASE_URL,import.meta.env.VITE_SUPABASE_ANON_KEY):null;
-const key='nexus-demo-v1';
-export const programs=[{id:'10000000-0000-4000-8000-000000000001',name:'Diploma of Business'},{id:'10000000-0000-4000-8000-000000000002',name:'Diploma of Information Technology'},{id:'10000000-0000-4000-8000-000000000003',name:'Certificate III in Early Childhood Education and Care'},{id:'10000000-0000-4000-8000-000000000004',name:'Diploma of Community Services'}];
-const now=()=>new Date().toISOString();
-function seed(){const names=['Amelia Wilson','Oliver Chen','Isabella Patel','Noah Williams','Mia Thompson','Ethan Nguyen','Ava Martin','Lucas Brown','Sophia Taylor','Liam Davis','Charlotte Lee','Henry Clarke'];const stages=['Enquiry','Qualified','Application','Enrolled','Enquiry','Qualified','Application','Withdrawn','Enquiry','Application','Enrolled','Closed'];const prospects=names.map((full_name,i)=>({id:crypto.randomUUID(),full_name,email:full_name.toLowerCase().replace(' ','.')+'@example.com',phone:'0400 000 '+String(i).padStart(3,'0'),address:'10 Example Street, Demo City',stage:stages[i],assigned_staff_id:'demo-staff',created_at:new Date(Date.now()-i*86400000).toISOString(),enquiries:[{id:crypto.randomUUID(),program_id:programs[i%4].id,programs:programs[i%4],source:'Website',message:'Please send information about entry requirements and the next intake.',enquiry_date:now(),duplicate_flag:false}],applications:['Application','Enrolled'].includes(stages[i])?[{id:crypto.randomUUID(),program_id:programs[i%4].id,programs:programs[i%4],status:stages[i]==='Enrolled'?'Accepted':'Under Review',enrolments:stages[i]==='Enrolled'?[{enrolment_date:'2026-10-01'}]:[]}]:[],notes:[],followups:i%3===0?[{id:crypto.randomUUID(),title:'Discuss entry requirements',due_at:new Date(Date.now()+(i-2)*86400000).toISOString(),completed:false}]:[]}));const history=prospects.flatMap(p=>{let list=['Enquiry'];if(['Qualified','Application','Enrolled'].includes(p.stage))list.push('Qualified');if(['Application','Enrolled'].includes(p.stage))list.push('Application');if(p.stage==='Enrolled')list.push('Enrolled');if(['Withdrawn','Closed'].includes(p.stage))list.push(p.stage);return list.map((s,i)=>({prospect_id:p.id,from_stage:list[i-1]||null,to_stage:s,changed_at:p.created_at}));});return {prospects,history,audit:[]};}
+import { createClient } from "@supabase/supabase-js";
+import { validFile } from "../server/rules.js";
+import { initialState, demoRequest } from "./demo.js";
+export const demo = import.meta.env.VITE_DEMO_MODE === "true";
+export const supabase =
+  import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY
+    ? createClient(
+        import.meta.env.VITE_SUPABASE_URL,
+        import.meta.env.VITE_SUPABASE_ANON_KEY,
+      )
+    : null;
+const key = "nexus-demo-v2";
 let state;
-function load(){if(!state){try{state=JSON.parse(localStorage.getItem(key))||seed();}catch{state=seed();}}return state;}
-function save(){localStorage.setItem(key,JSON.stringify(state));}
-export function resetDemo(){state=seed();save();}
-export async function request(path,method='GET',body,profile){if(!demo){const session=await supabase?.auth.getSession();const response=await fetch('/api'+path,{method,headers:{'Content-Type':'application/json',...(session?.data.session?{Authorization:'Bearer '+session.data.session.access_token}:{})},...(body?{body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok)throw Error(data.error||'Request failed');return data;}
- const s=load();if(path==='/programs')return programs;
- if(path==='/enquiries'){const input=enquirySchema.parse(body);let p=s.prospects.find(p=>p.email===input.email);const duplicate=!!p;if(!p){p={...input,id:crypto.randomUUID(),stage:'Enquiry',created_at:now(),assigned_staff_id:null,enquiries:[],applications:[],notes:[],followups:[]};s.prospects.unshift(p);s.history.push({prospect_id:p.id,to_stage:'Enquiry',changed_at:now()});}const id=crypto.randomUUID();p.enquiries.push({...input,id,programs:programs.find(x=>x.id===input.program_id),source:'Website',enquiry_date:now(),duplicate_flag:duplicate});save();return {reference:id,message:'Thank you. Your enquiry has been received.'};}
- if(!profile)throw Error('Sign in required');
- if(path==='/staff')return [{id:'demo-staff',full_name:'Alex Morgan',role:'recruitment',active:true}];
- if(path==='/reports'){if(!can(profile.role,'report'))throw Error('Forbidden');return report(s.prospects,s.history);}
- if(path==='/audit'){if(!can(profile.role,'audit'))throw Error('Forbidden');return s.audit;}
- if(path==='/prospects'){if(!can(profile.role,'read'))throw Error('Forbidden');return structuredClone(s.prospects);}
- if(!can(profile.role,'write'))throw Error('Forbidden');const [, ,id,action]=path.split('/');const p=s.prospects.find(p=>p.id===id);if(!p)throw Error('Prospect not found');const old=p.stage;
- if(action==='update')Object.assign(p,body);
- if(action==='stage'){if(!transitionAllowed(p.stage,body.stage)||body.reason.trim().length<3)throw Error('Invalid transition or missing reason');p.stage=body.stage;}
- if(action==='application'){if(!['Qualified','Application'].includes(p.stage))throw Error('Qualify this prospect first');if(p.applications.some(a=>a.program_id===body.program_id))throw Error('Application already exists for this program');p.applications.push({id:crypto.randomUUID(),program_id:body.program_id,programs:programs.find(x=>x.id===body.program_id),status:'Draft',enrolments:[]});p.stage='Application';}
- if(action==='application_status'){const a=p.applications.find(a=>a.id===body.application_id);const next={Draft:['Submitted'],Submitted:['Under Review'],'Under Review':['Accepted','Rejected']};if(p.stage!=='Application'||!a||!next[a.status]?.includes(body.status))throw Error('Invalid application transition');a.status=body.status;}
- if(action==='enrol'){const a=p.applications.find(a=>a.id===body.application_id);if(p.stage!=='Application'||a?.status!=='Accepted')throw Error('Accepted application required');a.enrolments.push({enrolment_date:body.enrolment_date});p.stage='Enrolled';}
- if(action==='note')p.notes.unshift({id:crypto.randomUUID(),body:body.body,created_at:now()});
- if(action==='followup')p.followups.push({id:crypto.randomUUID(),...body,completed:false});
- if(action==='complete_followup'){const f=p.followups.find(f=>f.id===body.followup_id);if(!f)throw Error('Follow-up not found');f.completed=true;}
- if(old!==p.stage)s.history.push({prospect_id:p.id,from_stage:old,to_stage:p.stage,changed_at:now()});s.audit.unshift({id:crypto.randomUUID(),prospect_id:p.id,action,staff_users:{full_name:profile.full_name},logged_at:now(),detail:{from_stage:old,to_stage:p.stage,input:body}});save();return {ok:true};
+function load() {
+  if (!state) {
+    try {
+      state = JSON.parse(localStorage.getItem(key)) || initialState();
+    } catch {
+      state = initialState();
+    }
+  }
+  return state;
+}
+export function resetDemo() {
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const fileKey = localStorage.key(i);
+    if (fileKey?.startsWith("nexus-demo-file-"))
+      localStorage.removeItem(fileKey);
+  }
+  state = initialState();
+  localStorage.setItem(key, JSON.stringify(state));
+}
+export async function request(path, method = "GET", body, profile) {
+  if (demo) {
+    const next = structuredClone(load());
+    const data = demoRequest(next, path, method, body, profile);
+    state = next;
+    localStorage.setItem(key, JSON.stringify(state));
+    return structuredClone(data);
+  }
+  const session = await supabase?.auth.getSession();
+  const response = await fetch("/api" + path, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      ...(session?.data.session
+        ? { Authorization: "Bearer " + session.data.session.access_token }
+        : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ error: "Request failed" }));
+    throw Error(error.error);
+  }
+  return response.json();
+}
+export async function uploadDocument(type, file, profile) {
+  if (
+    !["application/pdf", "image/jpeg", "image/png"].includes(file.type) ||
+    file.size > 10485760 ||
+    file.size < 1
+  )
+    throw Error("Choose a PDF, JPG or PNG up to 10 MB");
+  const ticket = await request(
+    "/uploads/prepare",
+    "POST",
+    {
+      document_type_id: type,
+      file_name: file.name,
+      mime_type: file.type,
+      size_bytes: file.size,
+    },
+    profile,
+  );
+  if (demo) {
+    const buffer = new Uint8Array(await file.arrayBuffer());
+    if (!validFile(buffer, file.type))
+      throw Error("File content does not match its declared format");
+    await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => {
+        try {
+          localStorage.setItem("nexus-demo-file-" + ticket.id, r.result);
+          resolve();
+        } catch {
+          reject(Error("Demo browser storage is full. Use a smaller file."));
+        }
+      };
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+  } else {
+    const { error } = await supabase.storage
+      .from("nexus-documents")
+      .uploadToSignedUrl(ticket.path, ticket.token, file, {
+        contentType: file.type,
+      });
+    if (error) throw Error("Upload failed. Retry or choose a smaller file.");
+  }
+  return request("/uploads/" + ticket.id + "/complete", "POST", {}, profile);
+}
+export async function downloadDocument(id, profile) {
+  if (demo) {
+    const data = localStorage.getItem("nexus-demo-file-" + id);
+    if (!data) throw Error("This seeded demo file has no content");
+    const a = document.createElement("a");
+    a.href = data;
+    a.download = "document";
+    a.click();
+    return;
+  }
+  const data = await request("/documents/" + id, "GET", null, profile);
+  window.open(data.url, "_blank", "noopener,noreferrer");
+}
+export async function downloadOffer(a, profile) {
+  if (demo) {
+    const w = window.open("", "_blank");
+    if (!w) throw Error("Allow a new window to print the demo offer");
+    const p = a.offer_snapshot;
+    const escape = (v) =>
+      String(v || "").replace(
+        /[&<>"']/g,
+        (c) =>
+          ({
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;",
+          })[c],
+      );
+    w.document.write(
+      "<title>RIC demo offer</title><h1>RIC — Letter of offer (demo)</h1>" +
+        Object.entries(p)
+          .map(([k, v]) => "<p><b>" + escape(k) + ": </b>" + escape(v) + "</p>")
+          .join(""),
+    );
+    w.document.close();
+    w.print();
+    return;
+  }
+  const { data } = await supabase.auth.getSession();
+  const response = await fetch("/api/offers/" + a.id + "/pdf", {
+    headers: { Authorization: "Bearer " + data.session.access_token },
+  });
+  if (!response.ok) throw Error("Offer letter could not be downloaded");
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "RIC-offer.pdf";
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
