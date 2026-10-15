@@ -92,3 +92,13 @@ The included cron runs once daily at 00:00 UTC (09:30 Darwin) for compatibility 
 ## Backup and recovery
 
 Use a database-owner backup/export appropriate to your Supabase plan before migrations, retain Auth identities/profile links consistently, and back up Storage objects as well as database metadata. Restore into a separate project and check row/object references before relying on the backup. CSV exports are not full backups. Before real use agree RIC's criteria, consent wording, offer terms, retention, authorized access and abuse controls. Only fictional data is supplied here; no live RIC records or cloud credentials are committed.
+
+## Course automation update (003)
+
+Existing v2 installations: run `supabase/migrations/003_course_automations.sql` in the Supabase SQL editor. Do not rerun the base schema or 002. Deploy the updated application. The migration is safe to reapply and does not populate fictional requirements.
+
+As an admin, open Settings → Course automations. Set the approved minimum qualification, accepted English test score thresholds and the public HTTPS brochure URL for each active course. Unsupported tests and missing configuration require staff review; a submitted passing assessment progresses immediately to Qualified. Below-minimum/borderline assessments retain the existing human review policy. Changes apply to future submissions; existing assessments are not silently rewritten.
+
+The enquiry transaction queues one brochure email for its selected course. It contains a download link (not a PDF attachment); no server fetches arbitrary URLs. Missing links create a one-working-day staff follow-up task per prospect/course and send an honest acknowledgement. After supplying a missing brochure, staff must follow up on that task; old email snapshots are not rewritten or automatically resent.
+
+To actually deliver enquiry emails, configure Vercel Production `EMAIL_DELIVERY_MODE=resend`, `RESEND_API_KEY`, `MAIL_FROM` on a verified sending domain, `APP_URL` and `SUPABASE_SERVICE_ROLE_KEY`, then redeploy. Supabase Auth SMTP alone does not enable CRM brochure emails. `log` records events without sending. Test one enquiry for each course and inspect its email status and brochure link. Verify passing, borderline, failing and missing-evidence qualification submissions before real recruitment.

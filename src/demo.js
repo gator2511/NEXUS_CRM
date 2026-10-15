@@ -5,6 +5,7 @@ import {
   enquirySchema,
   stages,
   qualificationLevels,
+  programAutomationSchema,
 } from "../server/rules.js";
 const uid = () => crypto.randomUUID(),
   now = () => new Date().toISOString();
@@ -157,6 +158,7 @@ export function initialState() {
   return state;
 }
 export function demoRequest(state, path, method, body = {}, profile) {
+  const courses = (state.programs ||= structuredClone(demoPrograms));
   const addAudit = (p, action) =>
     state.audit.unshift({
       id: uid(),
@@ -234,7 +236,7 @@ export function demoRequest(state, path, method, body = {}, profile) {
     const a = {
       id: uid(),
       program_id: gid,
-      programs: demoPrograms.find((g) => g.id === gid),
+      programs: courses.find((g) => g.id === gid),
       cycle: p.cycle,
       status: "Draft",
       intake_id,
@@ -245,7 +247,14 @@ export function demoRequest(state, path, method, body = {}, profile) {
     p.current_application_id = a.id;
     return a;
   };
-  if (path === "/programs") return demoPrograms;
+  if (/^\/programs\/[^/]+\/automation$/.test(path) && method === "POST") {
+    if (!can(profile?.role, "users")) throw Error("Admin access required");
+    const course = courses.find((g) => g.id === path.split("/")[2]);
+    if (!course) throw Error("Program not found");
+    Object.assign(course, programAutomationSchema.parse(body));
+    return course;
+  }
+  if (path === "/programs") return courses;
   if (path === "/enquiries") {
     const input = enquirySchema.parse(body);
     let p = state.prospects.find((p) => p.email === input.email);
@@ -281,7 +290,7 @@ export function demoRequest(state, path, method, body = {}, profile) {
     p.enquiries.unshift({
       ...input,
       id,
-      programs: demoPrograms.find((g) => g.id === input.program_id),
+      programs: courses.find((g) => g.id === input.program_id),
       source: "Website",
       enquiry_date: now(),
       duplicate_flag: duplicate,
@@ -412,7 +421,7 @@ export function demoRequest(state, path, method, body = {}, profile) {
           stage: p.stage,
           closed_reason: p.closed_reason,
         },
-        program: demoPrograms.find((g) => g.id === (a?.program_id || gid)),
+        program: courses.find((g) => g.id === (a?.program_id || gid)),
         intakes: state.intakes.filter(
           (i) => i.program_id === (a?.program_id || gid),
         ),
@@ -440,22 +449,29 @@ export function demoRequest(state, path, method, body = {}, profile) {
         )
           throw Error("Complete all academic and language fields");
         stage(p, "Qualification review");
-        const threshold = { IELTS: 6, PTE: 50, TOEFL: 60 }[
-          body.language_test_type
-        ];
+        const course = courses.find((g) => g.id === gid);
+        const threshold =
+          course?.language_requirements?.[body.language_test_type];
+        const academicFail =
+          qualificationLevels.indexOf(body.highest_qualification) + 1 <
+          course?.min_qualification_level;
         const margin = body.language_test_type === "IELTS" ? 0.5 : 5;
-        value.auto_result = !threshold
-          ? "Review"
-          : body.language_score >= threshold
-            ? "Pass"
-            : body.language_score >= threshold - margin
-              ? "Review"
-              : "Fail";
+        value.auto_result = academicFail
+          ? "Fail"
+          : threshold == null || !course?.min_qualification_level
+            ? "Review"
+            : body.language_score >= threshold
+              ? "Pass"
+              : body.language_score >= threshold - margin
+                ? "Review"
+                : "Fail";
         value.submitted_at = now();
         value.auto_reasons = [
           value.auto_result === "Pass"
             ? "All configured entry criteria met"
-            : "English evidence requires staff review",
+            : academicFail
+              ? "Academic qualification is below the program minimum"
+              : "English evidence requires staff review",
         ];
         if (value.auto_result === "Pass") {
           stage(p, "Qualified");

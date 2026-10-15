@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
   can,
+  programAutomationSchema,
   enquirySchema,
   report,
   staffActions,
@@ -389,6 +390,20 @@ app.post(
       ),
     );
   }),
+);
+app.post(
+  "/api/programs/:id/automation",
+  permit("users"),
+  wrap(async (req, res) =>
+    res.json(
+      check(
+        await req.db.rpc("configure_program", {
+          program_uuid: z.uuid().parse(req.params.id),
+          input: programAutomationSchema.parse(req.body),
+        }),
+      ),
+    ),
+  ),
 );
 app.post(
   "/api/staff/:id",

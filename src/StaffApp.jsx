@@ -1,3 +1,4 @@
+import CourseAutomation from "./CourseAutomation";
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -1374,6 +1375,13 @@ export default function StaffApp() {
                   </div>
                   {can(profile.role, "users") && (
                     <>
+                      <CourseAutomation
+                        programs={programs}
+                        profile={profile}
+                        refresh={refresh}
+                        run={run}
+                        busy={busy}
+                      />
                       <h3>Staff access</h3>
                       <p className="muted">
                         Create staff Auth accounts and profiles in Supabase.
@@ -1400,10 +1408,9 @@ export default function StaffApp() {
                     </>
                   )}
                   <p className="muted">
-                    Program criteria, intakes and document checklists are
-                    administrator configuration in Supabase. Fictional demo
-                    rules must be replaced with approved RIC requirements before
-                    real use.
+                    Intakes and document checklists are administrator
+                    configuration in Supabase. Fictional demo rules must be
+                    replaced with approved RIC requirements before real use.
                   </p>
                 </section>
               )}

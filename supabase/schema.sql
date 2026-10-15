@@ -4,4 +4,5 @@
 -- For psql users:
 \ir schema-v1.sql
 \ir migrations/002_student_workflow.sql
+\ir migrations/003_course_automations.sql
 \ir storage.sql

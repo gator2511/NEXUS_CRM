@@ -250,3 +250,22 @@ export function validFile(buffer, type) {
   }[type];
   return !!sig && sig.every((v, i) => buffer[i] === v);
 }
+
+export const programAutomationSchema = z.object({
+  min_qualification_level: z.number().int().min(1).max(5),
+  language_requirements: z
+    .object({
+      IELTS: z.number().min(0).max(9).optional(),
+      PTE: z.number().min(10).max(90).optional(),
+      TOEFL: z.number().min(0).max(120).optional(),
+    })
+    .strict(),
+  brochure_url: z
+    .string()
+    .trim()
+    .max(2000)
+    .refine(
+      (v) => !v || /^https:\/\/[^\s]+$/.test(v),
+      "Use a public HTTPS brochure URL",
+    ),
+});

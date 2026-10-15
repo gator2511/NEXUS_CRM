@@ -655,3 +655,132 @@ test("offer expiry, application and rejected-document automation follow distinct
     await db.close();
   }
 });
+
+test("course automation configuration is admin-only, audited and drives enquiry brochure payloads", async () => {
+  const db = await setup();
+  try {
+    await db.exec(await read("supabase/migrations/002_student_workflow.sql"));
+    await db.exec(await read("supabase/migrations/003_course_automations.sql"));
+    await db.exec(await read("supabase/migrations/003_course_automations.sql"));
+    await db.query(
+      "insert into auth.users(id,email,email_confirmed_at) values($1,'admin@example.com',now()),($2,'student@example.com',now())",
+      [staff, student],
+    );
+    await db.query(
+      "insert into staff_users(id,full_name,role) values($1,'Admin','admin')",
+      [staff],
+    );
+    const gid = (await db.query("select id from programs limit 1")).rows[0].id;
+    const config = {
+      min_qualification_level: 2,
+      language_requirements: { IELTS: 6, PTE: 50 },
+      brochure_url: "https://example.com/business.pdf",
+    };
+    await claim(db, student);
+    await assert.rejects(
+      rpc(db, "configure_program", [gid, j(config)]),
+      /Admin access required/,
+    );
+    await claim(db, staff);
+    await assert.rejects(
+      rpc(db, "configure_program", [
+        gid,
+        j({ ...config, brochure_url: "javascript:alert(1)" }),
+      ]),
+    );
+    await assert.rejects(
+      rpc(db, "configure_program", [
+        gid,
+        j({ ...config, language_requirements: { IELTS: 99 } }),
+      ]),
+    );
+    await rpc(db, "configure_program", [gid, j(config)]);
+    await claim(db, null, "postgres");
+    assert.equal(
+      (
+        await db.query(
+          "select count(*)::int n from audit_log where action='Program automation configured'",
+        )
+      ).rows[0].n,
+      1,
+    );
+    assert.equal(
+      (
+        await rpc(db, "wf_eligibility", [
+          gid,
+          j({
+            highest_qualification: "Diploma",
+            language_test_type: "IELTS",
+            language_score: 6,
+          }),
+        ])
+      ).result,
+      "Pass",
+    );
+    assert.equal(
+      (
+        await rpc(db, "wf_eligibility", [
+          gid,
+          j({
+            highest_qualification: "Year 12 or equivalent",
+            language_test_type: "IELTS",
+            language_score: 6,
+          }),
+        ])
+      ).result,
+      "Fail",
+    );
+    assert.equal(
+      (
+        await rpc(db, "wf_eligibility", [
+          gid,
+          j({
+            highest_qualification: "Diploma",
+            language_test_type: "None taken",
+          }),
+        ])
+      ).result,
+      "Review",
+    );
+    await claim(db, null, "anon");
+    const enquiry = {
+      full_name: "New Student",
+      email: "new@example.com",
+      phone: "0400000000",
+      address: "Example Street",
+      program_id: gid,
+      consent: true,
+    };
+    await rpc(db, "submit_enquiry", [j(enquiry)]);
+    await claim(db, null, "postgres");
+    const email = (
+      await db.query("select * from email_outbox where template='Brochure'")
+    ).rows[0];
+    assert.equal(email.recipient, enquiry.email);
+    assert.equal(email.payload.brochure_url, config.brochure_url);
+    assert.equal(
+      (
+        await db.query(
+          "select count(*)::int n from followups where kind like 'Brochure missing:%'",
+        )
+      ).rows[0].n,
+      0,
+    );
+    await db.query("update programs set brochure_url=null where id=$1", [gid]);
+    await claim(db, null, "anon");
+    await rpc(db, "submit_enquiry", [
+      j({ ...enquiry, email: "missing@example.com" }),
+    ]);
+    await claim(db, null, "postgres");
+    assert.equal(
+      (
+        await db.query(
+          "select count(*)::int n from followups where kind like 'Brochure missing:%'",
+        )
+      ).rows[0].n,
+      1,
+    );
+  } finally {
+    await db.close();
+  }
+});

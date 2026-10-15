@@ -6,7 +6,7 @@ export function emailMessage(row) {
     "",
   );
   const messages = {
-    Brochure: `Thank you for your enquiry about ${p.program || "your program"}. Course brochure: ${p.brochure_url || "available on request"}. Create your student account and verify your email to continue.`,
+    Brochure: `Thank you for your enquiry about ${p.program || "your program"}. Course brochure: ${p.brochure_url || "not yet available online; our admissions team will follow up"}. Create your student account and verify your email to continue.`,
     Qualified:
       "Your academic and language details meet the configured entry requirements. Please complete your application.",
     "Qualification review":

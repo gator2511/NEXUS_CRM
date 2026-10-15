@@ -130,3 +130,46 @@ test("management has reporting and automation without contact editing", async ()
   expect(screen.queryByRole("button", { name: "Prospects" })).toBeNull();
   expect(screen.getByRole("button", { name: "Run checks now" })).toBeTruthy();
 });
+
+test("admin saves approved course criteria and brochure through settings form", async () => {
+  resetDemo();
+  const { request } = await import("../src/data");
+  const { default: CourseAutomation } = await import("../src/CourseAutomation");
+  const profile = { role: "admin" };
+  const courses = await request("/programs");
+  const user = userEvent.setup();
+  render(
+    <CourseAutomation
+      programs={courses}
+      profile={profile}
+      refresh={async () => {}}
+      run={async (fn) => {
+        await fn();
+        return true;
+      }}
+      busy={false}
+    />,
+  );
+  await user.click(
+    screen.getAllByRole("button", { name: "Configure automation" })[0],
+  );
+  await user.selectOptions(
+    screen.getByLabelText("Minimum academic qualification"),
+    "3",
+  );
+  await user.type(
+    screen.getByLabelText("Course brochure URL"),
+    "https://example.com/approved.pdf",
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Save course automation" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Save course automation" }),
+    ).toBeNull(),
+  );
+  const saved = (await request("/programs"))[0];
+  expect(saved.min_qualification_level).toBe(3);
+  expect(saved.brochure_url).toBe("https://example.com/approved.pdf");
+});
